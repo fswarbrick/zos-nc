@@ -1,4 +1,6 @@
-all: nc
+BINS:=nc
+
+all: $(BINS)
 
 ME:=$(firstword $(MAKEFILE_LIST))
 

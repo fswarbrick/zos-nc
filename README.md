@@ -40,3 +40,15 @@ On PC (as client)
 ```
 tar -cvf - mydir | nc zos-A 4321
 ```
+
+Example 3:
+
+Transfer a directory from system zos-A to system zos-B
+On zos-A (as server), add data encryption.
+```
+/bin/pax -w -z -x pax mysource/ | gpg -c --batch --passphrase 123456 -o - 2>/dev/null | nc -l 4321
+```
+On zos-B (as client)
+```
+nc zos-A 4321 | gpg -d --batch --passphrase 123456 2>/dev/null | /bin/pax -v -ppx -r
+```

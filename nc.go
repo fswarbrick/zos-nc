@@ -50,8 +50,8 @@ func ConnToChan(src io.Reader, ch chan Packet, done chan int) {
 		}
 		ch <- buffer
 	}
-
 }
+
 func ChanToConn(ch chan Packet, tgt io.Writer, done chan int) {
 	defer func() {
 		done <- 0
@@ -79,8 +79,7 @@ func doConn(con net.Conn) {
 	go ConnToChan(os.Stdin, ch_remote, complete)
 	go ChanToConn(ch_remote, con, complete)
 
-	_, _ = <-complete
-
+	<-complete
 }
 
 func IsEOF(err error) bool {
@@ -100,16 +99,60 @@ func IsEOF(err error) bool {
 	return false
 }
 
+func proxyConnect(proxy string, protocol string, host string) net.Conn {
+	var con net.Conn
+	if protocol == "connect" {
+		con = connect(proxy)
+		conString := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: go-nc\r\nProxy-Connection: Keep-Alive\r\n\r\n", host, host)
+		if verbose {
+			log.Print("Sending request to proxy:\n", conString)
+		}
+		var buffer Packet
+		buffer.size = len(conString)
+		copy(buffer.data[:], []byte(conString))
+		_, err := io.Writer(con).Write(buffer.data[0:buffer.size])
+		if err != nil {
+			log.Fatalln("Error writing CONNECT message to proxy", err)
+		}
+		bytes, err := io.Reader(con).Read(buffer.data[:])
+		if err != nil {
+			log.Fatalln("Error reading CONNECT result from proxy", err)
+		}
+		if verbose {
+			log.Print("Received response from proxy:\n", string(buffer.data[0:bytes]))
+		}
+	} else {
+		log.Fatalln("Bad proxy protocol.  We should not be here.")
+	}
+	return con
+}
+
+func connect(host string) net.Conn {
+	con, err := net.Dial("tcp", host)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	if verbose {
+		log.Println("Connected to", host)
+	}
+	return con
+}
+
 func main() {
 	var listen string
 	var destinationPort string
 	var isListen bool
 	var host string
+	var proxyProtocol string
+	var proxyString string
 	flag.StringVar(&listen, "l", "", "listen to port number n, :n or b:n, where n is port number, b is binding inteface, defaults to 0")
+	flag.StringVar(&proxyProtocol, "X", "", "connect to HTTP proxy")
+	flag.StringVar(&proxyString, "x", "", "host[:port] of proxy to connect to")
 	flag.BoolVar(&verbose, "v", false, "Noisy")
 	flag.Parse()
 	if flag.NFlag() == 0 && flag.NArg() == 0 {
-		fmt.Println("\nSimplified nc [-v] [-l port] or [hostname port]\n")
+		fmt.Println("\nSimplified nc [-v] [-l port] or [hostname port]")
+		fmt.Println("")
 		flag.Usage()
 		fmt.Println(`
 Examples:
@@ -155,9 +198,25 @@ Examples:
 		}
 		host = flag.Arg(0)
 		destinationPort = ":" + flag.Arg(1)
+
+		if proxyString != "" {
+			ret := strings.SplitN(proxyString, ":", 2)
+			if ret[0] == "" {
+				log.Println("Proxy host must not be empty")
+				os.Exit(1)
+			}
+			port := ret[len(ret)-1]
+			if v, err := strconv.Atoi(port); err != nil || (v > 65535 || v < 1) {
+				log.Println("Proxy port must be an integer between from 1-65536")
+				os.Exit(1)
+			}
+		}
+
 		if verbose {
 			log.Println("Hostname:", host)
 			log.Println("Port:", destinationPort)
+			log.Println("Proxy protocol:", proxyProtocol)
+			log.Println("Proxy:", proxyString)
 		}
 	}
 
@@ -179,12 +238,11 @@ Examples:
 		doConn(con)
 
 	} else if host != "" {
-		con, err := net.Dial("tcp", host+destinationPort)
-		if err != nil {
-			log.Fatalln(err)
-		}
-		if verbose {
-			log.Println("Connected to", host+destinationPort)
+		var con net.Conn
+		if proxyString != "" {
+			con = proxyConnect(proxyString, proxyProtocol, host+destinationPort)
+		} else {
+			con = connect(host + destinationPort)
 		}
 		doConn(con)
 	} else {
